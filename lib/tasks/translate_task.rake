@@ -3,53 +3,59 @@ require 'rexml/document'
 require 'bing_translator'
 
 desc "Translate your YAML files using Bing."
-task :translate => :environment do
+task :bing_translate => :environment do
   @from_locale = ENV["from"]
   raise "need to specify from=<locale>" unless @from_locale
-  
+
   @to_locale = ENV["to"]
   raise "need to specify to=<locale>" unless @to_locale
-  
-  @app_id = ENV["app_id"]
-  raise "need to specify app_id=<Your Bing API key>" unless @app_id
-  
-  puts "Translating..."
-  
-  source_path = "#{Rails.root}/config/locales/#{@from_locale}.yml"
-  dest_path = "#{Rails.root}/config/locales/#{@to_locale}.yml"
-  
-  if File.exists?(source_path)
-    source_yaml = YAML::load(File.open(source_path))
-    source = source_yaml ? source_yaml[@from_locale] || {} : {}
-  else
-    source = {}
+
+  @client_id = ENV["client_id"]
+  raise "need to specify client_id=<Your Bing API Client id>" unless @client_id
+
+  @client_secret = ENV["client_secret"]
+  raise "need to specify client_secret=<Your Bing API Client secret>" unless @client_secret
+
+
+  source_size = source_files.size
+
+  puts "Translating #{source_size} files..."
+
+  source_files.each_with_index do |source_file, index|
+    puts source_file
+    translate_file(source_file)
+    puts "#{(index+1).to_f / source_size * 100} %"
   end
 
-  if File.exists?(dest_path)
-    dest_yaml = YAML::load(File.open(dest_path))
-    dest = dest_yaml ? dest_yaml[@to_locale] || {} : {}
-  else
-    dest = {}
-  end
-  
-  source = source_yaml ? source_yaml[@from_locale] || {} : {}
-  dest = dest_yaml ? dest_yaml[@to_locale] || {} : {}
-  
-  translated = translate_hash(source)
-  
-  out = { @to_locale => translated.deep_merge(dest) }
-  
-  File.open(dest_path, 'w') {|f| YAML.dump(out, f) }
-  
   puts "Done!"
+end
+
+def translate_file(source_path)
+  source_yaml = YAML::load(File.open(source_path))
+  source = source_yaml ? source_yaml[@from_locale] || {} : {}
+  translated = translate_hash(source)
+  save_to_file(translated, destination_path(source_path))
+end
+
+# ../locales/views/health_library/health_library.en.yml
+# => ../locales/views/health_library/health_library.es.yml
+def destination_path(source_path)
+  dest_basename = File.basename(source_path, ".#{@from_locale}.yml")
+  dirname = File.dirname(source_path)
+  File.join(dirname, "#{dest_basename}.#{@to_locale}.yml")
+end
+
+def save_to_file(translated, dest_path)
+  out = { @to_locale => translated }
+  File.open(dest_path, 'w') {|f| YAML.dump(out, f) }
 end
 
 def translate_hash(yaml)
   dest = yaml.dup
-  
+
   yaml.keys.each do |key|
     source = yaml[key]
-    
+
     if source.is_a?(Symbol)
       translated = source
     elsif source.is_a?(String)
@@ -61,10 +67,10 @@ def translate_hash(yaml)
     else
       translated = ""
     end
-    
+
     dest[key] = translated
   end
-  
+
   dest
 end
 
@@ -82,14 +88,32 @@ end
 
 def translate_string(source)
   return "" unless source
-  
+
   dest = translator.translate(source, :from => @from_locale, :to => @to_locale)
-  
+
   puts "#{source} => #{dest}"
-  
+
   dest
 end
 
 def translator
-  @translator ||= BingTranslator.new @app_id
+  @translator ||= BingTranslator.new(@client_id, @client_secret)
+end
+
+
+def source_files
+  return @source_files if @source_files
+  given = ENV["path"]
+  @source_files = if given
+    if File.directory?(given)
+      puts "Using given path '#{given}'"
+      Dir[File.join(given, "**", "*.#{@from_locale}.yml")]
+    else
+      puts "Using given file: '#{given}'"
+      [given]
+    end
+  else
+    puts "Path not given. Selecting all files in config/locales/"
+    Dir[File.join(Rails.root, "config/locales", "**", "*.#{@from_locale}.yml")]
+  end
 end
